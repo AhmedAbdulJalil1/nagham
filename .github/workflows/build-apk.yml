@@ -1,3 +1,8 @@
+# ═══════════════════════════════════════════════════════════
+#  مصنع بناء تطبيق نغم — يبني APK حقيقي من الملف المضغوط
+#  الإصدار 3: يستخدم كاباستور الموجود داخل المشروع تلقائيًا
+#  (لا يثبّت نسخة أخرى → لا تعارض ERESOLVE نهائيًا)
+# ═══════════════════════════════════════════════════════════
 name: بناء تطبيق أندرويد
 
 on:
@@ -17,12 +22,16 @@ jobs:
       - name: تحميل ملفات المشروع
         uses: actions/checkout@v4
 
+      # ═══════ فك ضغط الملف المضغوط تلقائيًا ═══════
       - name: فك ضغط الملف المضغوط تلقائيًا
         run: |
           set -e
+          echo "===== محتويات المستودع قبل الفك ====="
+          ls -la
           ZIP=$(find . -maxdepth 3 -type f -name "*.zip" | head -1 || true)
           if [ -n "$ZIP" ]; then
             echo "📦 تم العثور على الملف المضغوط: $ZIP"
+            echo "🔄 جاري فك الضغط..."
             mkdir -p _unzip
             unzip -o "$ZIP" -d _unzip
             if [ -f _unzip/index.html ]; then
@@ -30,12 +39,15 @@ jobs:
             else
               SRC="$(find _unzip -name index.html -not -path "*/node_modules/*" | head -1 | xargs dirname 2>/dev/null || echo _unzip)"
             fi
+            echo "📂 مصدر الملفات: $SRC"
             shopt -s dotglob
             cp -r "$SRC"/* . 2>/dev/null || true
             shopt -u dotglob
             rm -rf _unzip
             find . -maxdepth 3 -type f -name "*.zip" -delete
           fi
+          echo "===== محتويات المستودع بعد الفك ====="
+          ls -la
           if [ ! -f index.html ] || [ ! -f package.json ]; then
             echo "❌ ملفات المشروع غير موجودة بعد فك الضغط!"
             exit 1
@@ -59,9 +71,12 @@ jobs:
         with:
           node-version: "20"
 
+      # ═══════ تثبيت الحزم — يستخدم إصدارات المشروع نفسها ═══════
+      # لا يثبّت كاباستور منفصلًا إطلاقًا (حتى لا يتعارض مع الموجود)
       - name: تثبيت حزم المشروع
         run: npm install --no-audit --no-fund
 
+      # فحص: لو المشروع قديم وليس فيه كاباستور → نثبّت له كاباستور 6
       - name: ضمان وجود كاباستور (للمشاريع القديمة فقط)
         run: |
           if ! grep -q '"@capacitor/core"' package.json; then
@@ -85,6 +100,7 @@ jobs:
       - name: مزامنة ملفات التطبيق
         run: npx cap sync android
 
+      # ═══════ حقن الفاحص الأصلي (MediaStore) ═══════
       - name: حقن الفاحص الأصلي ووضع ملء الشاشة
         run: |
           mkdir -p android/app/src/main/java/com/nagham/app
