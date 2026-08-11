@@ -1,0 +1,123 @@
+# ═══════════════════════════════════════════════════════════
+#  مصنع بناء نغم — إصدار مبسّط ومتين
+#  كود الجافا في ملفات منفصلة (native/) → لا تعقيد هنا
+# ═══════════════════════════════════════════════════════════
+name: بناء تطبيق أندرويد
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: فك ضغط الملف المضغوط
+        run: |
+          ZIP=$(find . -maxdepth 3 -type f -name "*.zip" | head -1 || true)
+          if [ -n "$ZIP" ]; then
+            mkdir -p _unzip
+            unzip -o "$ZIP" -d _unzip
+            if [ -f _unzip/index.html ]; then
+              SRC="_unzip"
+            else
+              SRC="$(find _unzip -name index.html -not -path "*/node_modules/*" | head -1 | xargs dirname 2>/dev/null || echo _unzip)"
+            fi
+            shopt -s dotglob
+            cp -r "$SRC"/* . 2>/dev/null || true
+            shopt -u dotglob
+            rm -rf _unzip
+            find . -maxdepth 3 -type f -name "*.zip" -delete
+          fi
+          test -f index.html && test -f package.json
+
+      - name: تنظيف
+        run: rm -rf node_modules dist android || true
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: تثبيت الحزم
+        run: npm install --no-audit --no-fund
+
+      - name: بناء الواجهة
+        run: npm run build
+
+      - name: توليد مشروع أندرويد
+        run: |
+          test -f capacitor.config.json || echo '{"appId":"com.nagham.app","appName":"نغم","webDir":"dist","backgroundColor":"#08080f"}' > capacitor.config.json
+          npx cap add android
+          npx cap sync android
+
+      - name: تثبيت الفاحص الأصلي والأيقونة
+        run: |
+          mkdir -p android/app/src/main/java/com/nagham/app
+          cp native/MediaScannerPlugin.java android/app/src/main/java/com/nagham/app/
+          cp native/MainActivity.java android/app/src/main/java/com/nagham/app/
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          grep -q "READ_MEDIA_AUDIO" "$MANIFEST" || sed -i 's#</manifest>#<uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n</manifest>#' "$MANIFEST"
+          ICON=""
+          [ -f public/icon-512.png ] && ICON="public/icon-512.png"
+          [ -z "$ICON" ] && [ -f icon-512.png ] && ICON="icon-512.png"
+          if [ -n "$ICON" ]; then
+            sudo apt-get update -qq || true
+            sudo apt-get install -y -qq imagemagick || true
+            for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+              case $d in
+                mdpi) s=48;; hdpi) s=72;; xhdpi) s=96;; xxhdpi) s=144;; xxxhdpi) s=192;;
+              esac
+              mkdir -p android/app/src/main/res/mipmap-$d
+              convert "$ICON" -resize ${s}x${s} android/app/src/main/res/mipmap-$d/ic_launcher.png || true
+            done
+            rm -f android/app/src/main/res/drawable-v24/ic_launcher_foreground.xml
+          fi
+          echo "تم التثبيت بنجاح"
+
+      - name: بناء ملف APK
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+      - name: تسمية الملف النهائي
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk nagham.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nagham-apk
+          path: nagham.apk
+
+      - name: حذف الإصدار القديم
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete nagham-latest --yes --cleanup-tag --repo ${{ github.repository }} || true
+
+      - name: نشر الإصدار الجديد
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nagham-latest
+          name: نغم — تطبيق أندرويد
+          body: |
+            📲 أحدث نسخة من تطبيق نغم
+
+            حمّل nagham.apk وافتحه على هاتفك لتثبيته مباشرة.
+            - فحص تلقائي لكل ملفات الهاتف عند الفتح
+            - معادل صوتي + مؤثرات بصرية + قوائم تشغيل
+            - فيديو بملء الشاشة + إيماءات + تشغيل في الخلفية
+          files: nagham.apk
+          draft: false
+          prerelease: false
